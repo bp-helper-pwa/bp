@@ -139,7 +139,7 @@ function runs(flags,gap){
 }
 const SEG={'abcdef':0,'bc':1,'abdeg':2,'abcdg':3,'bcfg':4,'acdfg':5,'acdefg':6,'abc':7,'abcf':7,'abcdefg':8,'abcdfg':9};
 const BOX={a:[.15,.85,0,.2],b:[.6,1,.1,.45],c:[.6,1,.55,.9],d:[.15,.85,.8,1],e:[0,.4,.55,.9],f:[0,.4,.1,.45],g:[.15,.85,.4,.6]};
-function decode(mask,w,x0,x1,y0,y1){
+function decode(dm,dc,w,x0,x1,y0,y1){
   const gw=x1-x0+1,gh=y1-y0+1;
   if(gw/gh<0.38)return '1';
   const fr={};
@@ -148,18 +148,19 @@ function decode(mask,w,x0,x1,y0,y1){
     const xs=Math.floor(x0+a*gw),xe=Math.max(xs,Math.ceil(x0+b*gw)-1);
     const ys=Math.floor(y0+c*gh),ye=Math.max(ys,Math.ceil(y0+d*gh)-1);
     let n=0,t=0;
-    for(let y=ys;y<=ye;y++)for(let x=xs;x<=xe;x++){n+=mask[y*w+x];t++;}
-    fr[k]=Math.min(1,n/t/0.6);
+    for(let y=ys;y<=ye;y++)for(let x=xs;x<=xe;x++){n+=dc[y*w+x];t++;}
+    fr[k]=n/t;
   }
-  // 與各數字樣板比對,取最接近者(容許斜體與 7 的不同寫法)
-  let best='?',bs=1e9;
+  // 以「最亮核心」正規化後,與各數字樣板做柔性比對(L1 距離),可容忍光暈與斜體造成的誤差
+  const top=Object.values(fr).sort((p,q)=>q-p).slice(0,3);
+  const m3=Math.max(0.03,(top[0]+top[1]+top[2])/3);
+  let best='?',bd=1e9;
   for(const key in SEG){
-    let sc=0;
-    for(const k of 'abcdefg')sc+=Math.pow(fr[k]-(key.includes(k)?1:0),2);
-    if(key==='abcf'||key==='abc')sc+=0; 
-    if(sc<bs){bs=sc;best=String(SEG[key]);}
+    let dist=0;
+    for(const k of 'abcdefg')dist+=Math.abs(Math.min(1,fr[k]/m3)-(key.includes(k)?1:0));
+    if(dist<bd){bd=dist;best=String(SEG[key]);}
   }
-  return bs<1.6?best:'?';
+  return bd<1.8?best:'?';
 }
 function analyzeFrame(cv){
   const w=cv.width,h=cv.height;
@@ -184,6 +185,8 @@ function analyzeFrame(cv){
     for(let y=b.s;y<=b.e;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4,r=d[i];if(r>d[i+1]*1.7&&r>d[i+2]*1.5&&r>=100){hist[r]++;tot++;}}
     let acc=0,p90=255;for(let v=255;v>=0;v--){acc+=hist[v];if(acc>=tot*0.1){p90=v;break;}}
     const thr=Math.max(140,Math.round(p90*0.65));
+    let acc2=0,p99=255;for(let v=255;v>=0;v--){acc2+=hist[v];if(acc2>=tot*0.01){p99=v;break;}}
+    const hi=Math.max(thr+1,Math.round(p99*0.8));
     for(let y=b.s;y<=b.e;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4,r=d[i];m[y*w+x]=(r>=thr&&r>d[i+1]*1.7&&r>d[i+2]*1.5)?1:0;}
     // 斜體校正:嘗試多個剪切係數,取欄投影最集中者
     const ym=(b.s+b.e)/2;let bk=0,bsc=-1;
@@ -193,14 +196,17 @@ function analyzeFrame(cv){
       let sc=0;for(let x=0;x<w;x++)sc+=c[x]*c[x];
       if(sc>bsc){bsc=sc;bk=k;}
     }
-    const dm=new Uint8Array(w*h);
-    for(let y=b.s;y<=b.e;y++)for(let x=0;x<w;x++)if(m[y*w+x]){const xs=Math.round(x-(ym-y)*bk);if(xs>=0&&xs<w)dm[y*w+xs]=1;}
+    const dm=new Uint8Array(w*h),dc=new Uint8Array(w*h);
+    for(let y=b.s;y<=b.e;y++)for(let x=0;x<w;x++)if(m[y*w+x]){
+      const xs=Math.round(x-(ym-y)*bk);
+      if(xs>=0&&xs<w){dm[y*w+xs]=1;if(d[(y*w+x)*4]>=hi)dc[y*w+xs]=1;}
+    }
     const cols=new Int32Array(w);
     for(let y=b.s;y<=b.e;y++)for(let x=0;x<w;x++)cols[x]+=dm[y*w+x];
     const gs=runs(Array.from(cols,v=>v>=2),Math.max(2,Math.round(H*0.04))).filter(([a,c])=>c-a>=1);
     b.groups=gs;
     b.skew=bk;
-    vals.push(gs.map(([a,c])=>decode(dm,w,a,c,b.s,b.e)).join(''));
+    vals.push(gs.map(([a,c])=>decode(dm,dc,w,a,c,b.s,b.e)).join(''));
   }
   return {bands,vals,mask:m,w,h};
 }
