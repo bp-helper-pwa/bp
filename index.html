@@ -32,7 +32,18 @@ input[type=number]{width:100%;font-size:26px;padding:8px;border-radius:10px;bord
 .ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
 ul.a{padding-left:20px;margin:8px 0}
 ul.a li{margin:6px 0}
-.hist div{display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:7px 0;font-size:14px}
+.rec{border-bottom:1px solid var(--line);padding:10px 0;position:relative}
+.rec .rt{font-size:13px;color:var(--sub)}
+.rec .rv{font-size:18px;font-weight:600}
+.rec .rs{font-size:13px;color:var(--sub)}
+.rec .del{position:absolute;right:0;top:8px;flex:none;min-width:0;width:auto;padding:4px 10px;font-size:12px;color:var(--sub)}
+input[type=datetime-local]{width:100%;font-size:18px;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--tx);min-height:48px}
+:root{--c1:#d93025;--c2:#1a73e8;--c3:#1e8e3e}
+@media(prefers-color-scheme:dark){:root{--c1:#ff7b72;--c2:#79b8ff;--c3:#56d364}}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;margin-top:6px}
+.legend i{display:inline-block;width:18px;height:3px;vertical-align:middle;margin-right:5px;border-radius:2px}
+#chart svg{width:100%;height:auto;display:block}
+#chart text{fill:var(--sub);font-size:11px}
 details summary{cursor:pointer;color:var(--sub);font-size:14px}
 .note{font-size:12px;color:var(--sub)}
 #status{font-size:13px;color:var(--sub);min-height:20px;margin-top:6px}
@@ -61,10 +72,13 @@ details summary{cursor:pointer;color:var(--sub);font-size:14px}
 <div><label>舒張壓 mmHg</label><input id="dbp" type="number" inputmode="numeric"></div>
 <div><label>脈搏 拍/分</label><input id="pul" type="number" inputmode="numeric"></div>
 </div>
+<div style="margin-top:10px"><label>測量日期時間</label><input id="dt" type="datetime-local"></div>
 <div class="btns">
 <button id="bOcr2">備用 OCR(Tesseract)</button>
-<button id="bAna" class="p">分析</button>
+<button id="bAna">分析</button>
 </div>
+<div class="btns"><button id="bSave" class="p">儲存</button></div>
+<div id="saveMsg" class="note" style="margin-top:6px"></div>
 <div class="note" style="margin-top:6px">主辨識為內建七段顯示解析(離線可用);備用 OCR 需要網路下載一次模型。</div>
 </div>
 
@@ -81,7 +95,7 @@ details summary{cursor:pointer;color:var(--sub);font-size:14px}
 
 <div class="card">
 <details>
-<summary>指標門檻設定(依書中數值,可調整)</summary>
+<summary>指標門檻設定</summary>
 <div class="grid" style="margin-top:8px">
 <div><label>脈壓差注意值</label><input id="thPP" type="number" value="60"></div>
 <div><label>平均動脈壓注意值</label><input id="thMAP" type="number" value="90"></div>
@@ -90,9 +104,15 @@ details summary{cursor:pointer;color:var(--sub);font-size:14px}
 </div>
 
 <div class="card hist">
-<b>紀錄</b> <span class="sub">(僅存在本機)</span>
+<b>紀錄</b>
 <div id="hist"></div>
 <div class="btns"><button id="bClr">清除紀錄</button></div>
+</div>
+
+<div class="card">
+<b>紀錄圖表</b>
+<div id="chart" style="margin-top:8px"></div>
+<div class="legend"><span><i style="background:var(--c1)"></i>收縮壓</span><span><i style="background:var(--c2)"></i>舒張壓</span><span><i style="background:var(--c3)"></i>脈搏</span></div>
 </div>
 
 <script>
@@ -119,6 +139,7 @@ let lastCanvas=null,lastBands=null,lastMask=null;
 function shot(){
   const v=$('v');
   if(!stream||!v.videoWidth){$('status').textContent='請先開啟相機。';return;}
+  nowDT();
   process(frameToCanvas(v,v.videoWidth,v.videoHeight));
 }
 $('file').onchange=e=>{
@@ -328,28 +349,78 @@ function analyze(){
   adv.push('提醒:單次測量變異大,脈壓差與平均動脈壓以多日平均判讀較準;測量前 30 分鐘避免咖啡、抽菸與運動,手臂與心臟同高。');
   $('adv').innerHTML=adv.map(t=>`<li>${t}</li>`).join('');
   $('res').hidden=false;
-  save({t:Date.now(),sbp,dbp,pul,pp,map});
   $('res').scrollIntoView({behavior:'smooth',block:'start'});
 }
 
 /* ---------- 紀錄 ---------- */
 function load(){try{return JSON.parse(localStorage.getItem('bp_hist')||'[]')}catch(e){return[]}}
-function save(r){
+function store(h){localStorage.setItem('bp_hist',JSON.stringify(h.slice(0,500)));}
+const p2=n=>String(n).padStart(2,'0');
+function fmtDT(t){const d=new Date(t);return `${d.getFullYear()}/${p2(d.getMonth()+1)}/${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;}
+function nowDT(){
+  const d=new Date();
+  $('dt').value=`${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+function doSave(){
+  const sbp=+$('sbp').value,dbp=+$('dbp').value,pul=+$('pul').value;
+  const msg=$('saveMsg');
+  if(!(sbp>0&&dbp>0)||sbp<=dbp){msg.textContent='請先輸入有效的收縮壓與舒張壓(收縮壓需大於舒張壓)。';return;}
+  const t=new Date($('dt').value).getTime();
+  if(isNaN(t)){msg.textContent='請選擇測量日期時間。';return;}
+  const pp=sbp-dbp,map=Math.round((pp/3+dbp)*10)/10;
   const h=load();
-  const last=h[0];
-  if(last&&last.sbp===r.sbp&&last.dbp===r.dbp&&last.pul===r.pul&&r.t-last.t<60000)return render();
-  h.unshift(r);localStorage.setItem('bp_hist',JSON.stringify(h.slice(0,200)));render();
+  h.push({t,sbp,dbp,pul,pp,map});
+  h.sort((a,b)=>b.t-a.t);
+  store(h);
+  msg.textContent='已儲存('+fmtDT(t)+')';
+  nowDT();render();
+}
+function delRec(i){
+  const h=load();h.splice(i,1);store(h);render();
 }
 function render(){
-  const h=load();
-  $('hist').innerHTML=h.length?h.slice(0,30).map(r=>{
-    const d=new Date(r.t);
-    return `<div><span>${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}</span><span>${r.sbp}/${r.dbp} 脈${r.pul||'-'}</span><span>PP ${r.pp} · MAP ${r.map}</span></div>`;
-  }).join(''):'<div class="sub">尚無紀錄</div>';
+  const h=load().sort((a,b)=>b.t-a.t);
+  $('hist').innerHTML=h.length?h.slice(0,60).map((r,i)=>
+    `<div class="rec"><div class="rt">${fmtDT(r.t)}</div><div class="rv">${r.sbp}/${r.dbp} mmHg · 脈搏 ${r.pul||'-'}</div><div class="rs">脈壓差 ${r.pp} · 平均動脈壓 ${r.map}</div><button class="del" data-i="${i}">刪除</button></div>`
+  ).join(''):'<div class="sub">尚無紀錄</div>';
+  $('hist').querySelectorAll('.del').forEach(b=>b.onclick=()=>{if(confirm('刪除這筆紀錄?'))delRec(+b.dataset.i);});
+  renderChart();
+}
+function renderChart(){
+  const el=$('chart');
+  const h=load().sort((a,b)=>a.t-b.t).slice(-60);
+  if(!h.length){el.innerHTML='<div class="sub">儲存紀錄後會在這裡顯示圖表</div>';return;}
+  const W=640,H=320,L=40,R=16,T=14,B=48;
+  const t0=h[0].t,t1=h[h.length-1].t;
+  const px=t=>(h.length===1||t1===t0)?L+(W-L-R)/2:L+(t-t0)/(t1-t0)*(W-L-R);
+  const all=[];h.forEach(r=>{all.push(r.sbp,r.dbp);if(r.pul)all.push(r.pul);});
+  let lo=Math.floor((Math.min(...all)-5)/10)*10,hi=Math.ceil((Math.max(...all)+5)/10)*10;
+  const step=(hi-lo)>80?20:10;
+  const py=v=>T+(1-(v-lo)/(hi-lo))*(H-T-B);
+  let g='';
+  for(let v=lo;v<=hi;v+=step){
+    g+=`<line x1="${L}" x2="${W-R}" y1="${py(v)}" y2="${py(v)}" stroke="var(--line)" stroke-width="1"/><text x="${L-6}" y="${py(v)+4}" text-anchor="end">${v}</text>`;
+  }
+  // X 軸刻度:最多 5 個,依時間平均分布
+  const n=Math.min(5,h.length===1?1:5);
+  for(let i=0;i<n;i++){
+    const t=n===1?t0:t0+(t1-t0)*i/(n-1);
+    const d=new Date(t),x=px(t);
+    const anc=n>1?(i===0?'start':i===n-1?'end':'middle'):'middle';
+    g+=`<line x1="${x}" x2="${x}" y1="${H-B}" y2="${H-B+4}" stroke="var(--sub)"/><text x="${x}" y="${H-B+16}" text-anchor="${anc}">${p2(d.getMonth()+1)}/${p2(d.getDate())}</text><text x="${x}" y="${H-B+29}" text-anchor="${anc}">${p2(d.getHours())}:${p2(d.getMinutes())}</text>`;
+  }
+  const series=[['sbp','var(--c1)'],['dbp','var(--c2)'],['pul','var(--c3)']];
+  let lines='';
+  for(const [k,c] of series){
+    const pts=h.filter(r=>r[k]>0).map(r=>[px(r.t),py(r[k])]);
+    if(pts.length>1)lines+=`<polyline fill="none" stroke="${c}" stroke-width="2.4" stroke-linejoin="round" points="${pts.map(q=>q[0].toFixed(1)+','+q[1].toFixed(1)).join(' ')}"/>`;
+    lines+=pts.map(q=>`<circle cx="${q[0].toFixed(1)}" cy="${q[1].toFixed(1)}" r="3.6" fill="${c}"/>`).join('');
+  }
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="血壓與脈搏趨勢圖">${g}<line x1="${L}" x2="${L}" y1="${T}" y2="${H-B}" stroke="var(--sub)"/><line x1="${L}" x2="${W-R}" y1="${H-B}" y2="${H-B}" stroke="var(--sub)"/>${lines}</svg>`;
 }
 $('bClr').onclick=()=>{if(confirm('確定清除所有紀錄?')){localStorage.removeItem('bp_hist');render();}};
-$('bCam').onclick=openCam;$('bShot').onclick=shot;$('bAna').onclick=analyze;$('bOcr2').onclick=ocr2;
-render();
+$('bSave').onclick=doSave;$('bCam').onclick=openCam;$('bShot').onclick=shot;$('bAna').onclick=analyze;$('bOcr2').onclick=ocr2;
+nowDT();render();
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js'));
 </script>
 </body>
