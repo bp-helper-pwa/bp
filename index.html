@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#b3261e">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<title>血壓助手</title>
+<style>
+:root{--bg:#f6f4f1;--card:#fff;--tx:#1d1b1a;--sub:#6b6560;--ac:#b3261e;--ok:#1e7a46;--warn:#b26a00;--bad:#b3261e;--line:#e3ded8}
+@media(prefers-color-scheme:dark){:root{--bg:#161413;--card:#211e1d;--tx:#f1ece8;--sub:#a39c96;--line:#38332f;--ok:#5fcf8c;--warn:#f0b35a;--bad:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.55 system-ui,"Noto Sans TC",sans-serif;padding:0 14px calc(24px + env(safe-area-inset-bottom))}
+header{padding:16px 2px 6px}
+h1{font-size:22px;margin:0}
+.sub{color:var(--sub);font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:12px 0}
+.cam{position:relative;border-radius:12px;overflow:hidden;background:#000;aspect-ratio:3/4;max-height:60vh;width:100%}
+.cam video,.cam canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+button,.fbtn{flex:1;min-width:110px;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--tx);font-size:15px;text-align:center;cursor:pointer}
+button.p{background:var(--ac);border-color:var(--ac);color:#fff;font-weight:600}
+.fbtn input{display:none}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+label{display:block;font-size:12px;color:var(--sub)}
+input[type=number]{width:100%;font-size:26px;padding:8px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--tx);text-align:center}
+.met{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.m{border:1px solid var(--line);border-radius:12px;padding:10px}
+.m b{font-size:24px;display:block}
+.tag{font-size:12px;font-weight:600}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+ul.a{padding-left:20px;margin:8px 0}
+ul.a li{margin:6px 0}
+.hist div{display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:7px 0;font-size:14px}
+details summary{cursor:pointer;color:var(--sub);font-size:14px}
+.note{font-size:12px;color:var(--sub)}
+#status{font-size:13px;color:var(--sub);min-height:20px;margin-top:6px}
+</style>
+</head>
+<body>
+<header>
+<h1>🩺 血壓助手</h1>
+<div class="sub">拍下血壓計 → 自動辨識 → 動脈硬化指標 + 專業解讀</div>
+</header>
+
+<div class="card">
+<div class="cam"><video id="v" playsinline muted></video><canvas id="snap" hidden></canvas></div>
+<div id="status">按「開啟相機」,讓三排紅色數字清楚入鏡、避開反光。</div>
+<div class="btns">
+<button id="bCam">📷 開啟相機</button>
+<button id="bShot" class="p">拍攝辨識</button>
+<label class="fbtn">🖼 選擇照片<input id="file" type="file" accept="image/*"></label>
+</div>
+</div>
+
+<div class="card">
+<b>辨識結果(請核對,可直接修改)</b>
+<div class="grid" style="margin-top:8px">
+<div><label>收縮壓 mmHg</label><input id="sbp" type="number" inputmode="numeric"></div>
+<div><label>舒張壓 mmHg</label><input id="dbp" type="number" inputmode="numeric"></div>
+<div><label>脈搏 拍/分</label><input id="pul" type="number" inputmode="numeric"></div>
+</div>
+<div class="btns">
+<button id="bOcr2">備用 OCR(Tesseract)</button>
+<button id="bAna" class="p">分析</button>
+</div>
+<div class="note" style="margin-top:6px">主辨識為內建七段顯示解析(離線可用);備用 OCR 需要網路下載一次模型。</div>
+</div>
+
+<div id="res" class="card" hidden>
+<b>指標分析</b>
+<div class="met">
+<div class="m"><label>脈壓差(收縮壓 − 舒張壓)</label><b id="ppV"></b><span id="ppT" class="tag"></span></div>
+<div class="m"><label>平均動脈壓 (差÷3+舒張壓)</label><b id="mapV"></b><span id="mapT" class="tag"></span></div>
+</div>
+<div id="cat" style="margin-top:10px;font-weight:600"></div>
+<ul class="a" id="adv"></ul>
+<div class="note">本結果僅供健康管理參考,不能取代醫師診斷。若有胸痛、呼吸困難、劇烈頭痛、單側無力、說話不清等症狀,請立即就醫或撥打 119。</div>
+</div>
+
+<div class="card">
+<details>
+<summary>指標門檻設定(依書中數值,可調整)</summary>
+<div class="grid" style="margin-top:8px">
+<div><label>脈壓差注意值</label><input id="thPP" type="number" value="60"></div>
+<div><label>平均動脈壓注意值</label><input id="thMAP" type="number" value="90"></div>
+</div>
+</details>
+</div>
+
+<div class="card hist">
+<b>紀錄</b> <span class="sub">(僅存在本機)</span>
+<div id="hist"></div>
+<div class="btns"><button id="bClr">清除紀錄</button></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+let stream=null;
+
+/* ---------- 相機 ---------- */
+async function openCam(){
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
+    $('v').srcObject=stream;await $('v').play();
+    $('v').hidden=false;$('snap').hidden=true;
+    $('status').textContent='對準血壓計螢幕,拍攝前確認數字清晰。';
+  }catch(e){$('status').textContent='無法開啟相機:'+e.message+'(可改用「選擇照片」)';}
+}
+function frameToCanvas(src,sw,sh){
+  const c=document.createElement('canvas');
+  const k=Math.min(1,900/Math.max(sw,sh));
+  c.width=Math.round(sw*k);c.height=Math.round(sh*k);
+  c.getContext('2d').drawImage(src,0,0,c.width,c.height);
+  return c;
+}
+let lastCanvas=null,lastBands=null,lastMask=null;
+function shot(){
+  const v=$('v');
+  if(!stream||!v.videoWidth){$('status').textContent='請先開啟相機。';return;}
+  process(frameToCanvas(v,v.videoWidth,v.videoHeight));
+}
+$('file').onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  const img=new Image();
+  img.onload=()=>{process(frameToCanvas(img,img.naturalWidth,img.naturalHeight));URL.revokeObjectURL(img.src)};
+  img.src=URL.createObjectURL(f);
+};
+
+/* ---------- 七段顯示解析 ---------- */
+function runs(flags,gap){
+  const out=[];let s=-1,last=-1;
+  for(let i=0;i<flags.length;i++){
+    if(flags[i]){ if(s<0)s=i; else if(i-last>gap){out.push([s,last]);s=i;} last=i; }
+  }
+  if(s>=0)out.push([s,last]);
+  return out;
+}
+const SEG={'abcdef':0,'bc':1,'abdeg':2,'abcdg':3,'bcfg':4,'acdfg':5,'acdefg':6,'abc':7,'abcf':7,'abcdefg':8,'abcdfg':9};
+const BOX={a:[.15,.85,0,.2],b:[.6,1,.1,.45],c:[.6,1,.55,.9],d:[.15,.85,.8,1],e:[0,.4,.55,.9],f:[0,.4,.1,.45],g:[.15,.85,.4,.6]};
+function decode(mask,w,x0,x1,y0,y1){
+  const gw=x1-x0+1,gh=y1-y0+1;
+  if(gw/gh<0.38)return '1';
+  const fr={};
+  for(const k of 'abcdefg'){
+    const [a,b,c,d]=BOX[k];
+    const xs=Math.floor(x0+a*gw),xe=Math.max(xs,Math.ceil(x0+b*gw)-1);
+    const ys=Math.floor(y0+c*gh),ye=Math.max(ys,Math.ceil(y0+d*gh)-1);
+    let n=0,t=0;
+    for(let y=ys;y<=ye;y++)for(let x=xs;x<=xe;x++){n+=mask[y*w+x];t++;}
+    fr[k]=Math.min(1,n/t/0.6);
+  }
+  // 與各數字樣板比對,取最接近者(容許斜體與 7 的不同寫法)
+  let best='?',bs=1e9;
+  for(const key in SEG){
+    let sc=0;
+    for(const k of 'abcdefg')sc+=Math.pow(fr[k]-(key.includes(k)?1:0),2);
+    if(key==='abcf'||key==='abc')sc+=0; 
+    if(sc<bs){bs=sc;best=String(SEG[key]);}
+  }
+  return bs<1.6?best:'?';
+}
+function analyzeFrame(cv){
+  const w=cv.width,h=cv.height;
+  const d=cv.getContext('2d').getImageData(0,0,w,h).data;
+  const m=new Uint8Array(w*h);
+  for(let i=0,p=0;i<d.length;i+=4,p++){
+    const r=d[i],g=d[i+1],b=d[i+2];
+    m[p]=(r>140&&r>g*1.7&&r>b*1.5)?1:0;
+  }
+  const rowSum=new Int32Array(h);
+  for(let y=0;y<h;y++){let s=0;for(let x=0;x<w;x++)s+=m[y*w+x];rowSum[y]=s;}
+  const minPix=Math.max(3,w*0.004);
+  let bands=runs(Array.from(rowSum,v=>v>=minPix),Math.round(h*0.02))
+    .filter(([s,e])=>e-s+1>=h*0.03)
+    .map(([s,e])=>{let n=0;for(let y=s;y<=e;y++)n+=rowSum[y];return {s,e,n};});
+  bands.sort((a,b)=>b.n-a.n);bands=bands.slice(0,3).sort((a,b)=>a.s-b.s);
+  const vals=[];
+  for(const b of bands){
+    const H=b.e-b.s+1;
+    // 每一排依自身亮度重新二值化,濾掉較暗的未點亮段(殘影)
+    const hist=new Int32Array(256);let tot=0;
+    for(let y=b.s;y<=b.e;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4,r=d[i];if(r>d[i+1]*1.7&&r>d[i+2]*1.5&&r>=100){hist[r]++;tot++;}}
+    let acc=0,p90=255;for(let v=255;v>=0;v--){acc+=hist[v];if(acc>=tot*0.1){p90=v;break;}}
+    const thr=Math.max(140,Math.round(p90*0.65));
+    for(let y=b.s;y<=b.e;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4,r=d[i];m[y*w+x]=(r>=thr&&r>d[i+1]*1.7&&r>d[i+2]*1.5)?1:0;}
+    // 斜體校正:嘗試多個剪切係數,取欄投影最集中者
+    const ym=(b.s+b.e)/2;let bk=0,bsc=-1;
+    for(const k of [0,.04,.08,.12,.16,.2,.24]){
+      const c=new Int32Array(w);
+      for(let y=b.s;y<=b.e;y++)for(let x=0;x<w;x++)if(m[y*w+x]){const xs=Math.round(x-(ym-y)*k);if(xs>=0&&xs<w)c[xs]++;}
+      let sc=0;for(let x=0;x<w;x++)sc+=c[x]*c[x];
+      if(sc>bsc){bsc=sc;bk=k;}
+    }
+    const dm=new Uint8Array(w*h);
+    for(let y=b.s;y<=b.e;y++)for(let x=0;x<w;x++)if(m[y*w+x]){const xs=Math.round(x-(ym-y)*bk);if(xs>=0&&xs<w)dm[y*w+xs]=1;}
+    const cols=new Int32Array(w);
+    for(let y=b.s;y<=b.e;y++)for(let x=0;x<w;x++)cols[x]+=dm[y*w+x];
+    const gs=runs(Array.from(cols,v=>v>=2),Math.max(2,Math.round(H*0.04))).filter(([a,c])=>c-a>=1);
+    b.groups=gs;
+    b.skew=bk;
+    vals.push(gs.map(([a,c])=>decode(dm,w,a,c,b.s,b.e)).join(''));
+  }
+  return {bands,vals,mask:m,w,h};
+}
+function drawOverlay(cv,r){
+  const s=$('snap');s.width=cv.width;s.height=cv.height;
+  const g=s.getContext('2d');g.drawImage(cv,0,0);
+  g.lineWidth=Math.max(2,cv.width/300);g.font=Math.round(cv.width/22)+'px sans-serif';
+  r.bands.forEach((b,i)=>{
+    g.strokeStyle='#00e676';g.fillStyle='#00e676';
+    for(const [a,c] of b.groups)g.strokeRect(a-2,b.s-2,c-a+4,b.e-b.s+4);
+    g.fillText(r.vals[i],6,Math.max(b.s-4,24));
+  });
+  s.hidden=false;$('v').hidden=true;
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+}
+function process(cv){
+  lastCanvas=cv;
+  const r=analyzeFrame(cv);lastBands=r;
+  drawOverlay(cv,r);
+  const [a,b,c]=r.vals;
+  const ok=r.bands.length===3&&[a,b,c].every(v=>/^\d+$/.test(v));
+  $('sbp').value=/^\d+$/.test(a||'')?a:'';
+  $('dbp').value=/^\d+$/.test(b||'')?b:'';
+  $('pul').value=/^\d+$/.test(c||'')?c:'';
+  $('status').textContent=ok?'已辨識(綠框為偵測範圍),請核對數字。':'辨識不完整,請手動修正,或按「備用 OCR」。';
+  if($('sbp').value&&$('dbp').value)analyze();
+}
+
+/* ---------- 備用 OCR:Tesseract.js ---------- */
+function loadTess(){
+  return new Promise((res,rej)=>{
+    if(window.Tesseract)return res();
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    s.onload=res;s.onerror=()=>rej(new Error('無法載入 Tesseract(需要網路)'));
+    document.head.appendChild(s);
+  });
+}
+async function ocr2(){
+  if(!lastBands||!lastBands.bands.length){$('status').textContent='請先拍攝或選擇照片。';return;}
+  try{
+    $('status').textContent='備用 OCR 執行中…';
+    await loadTess();
+    const {bands,mask,w}=lastBands;
+    const worker=await Tesseract.createWorker('eng');
+    await worker.setParameters({tessedit_char_whitelist:'0123456789',tessedit_pageseg_mode:'7'});
+    const out=[];
+    for(const b of bands){
+      const H=b.e-b.s+1,pad=Math.round(H*0.4),sc=Math.max(1,Math.round(120/H));
+      const c=document.createElement('canvas');
+      c.width=(w+pad*2)*sc;c.height=(H+pad*2)*sc;
+      const g=c.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);g.fillStyle='#000';
+      for(let y=b.s;y<=b.e;y++)for(let x=0;x<w;x++)if(mask[y*w+x])g.fillRect((x+pad)*sc,(y-b.s+pad)*sc,sc,sc);
+      const {data}=await worker.recognize(c);
+      out.push((data.text||'').replace(/\D/g,''));
+    }
+    await worker.terminate();
+    if(out[0])$('sbp').value=out[0];
+    if(out[1])$('dbp').value=out[1];
+    if(out[2])$('pul').value=out[2];
+    $('status').textContent='備用 OCR 結果:'+out.join(' / ')+',請核對。';
+    analyze();
+  }catch(e){$('status').textContent=e.message;}
+}
+
+/* ---------- 分析 ---------- */
+function cls(level){return level===0?'ok':level===1?'warn':'bad';}
+function analyze(){
+  const sbp=+$('sbp').value,dbp=+$('dbp').value,pul=+$('pul').value;
+  if(!(sbp>0&&dbp>0)||sbp<=dbp){$('status').textContent='請輸入有效的收縮壓與舒張壓(收縮壓需大於舒張壓)。';return;}
+  const thPP=+$('thPP').value||60,thMAP=+$('thMAP').value||90;
+  const pp=sbp-dbp,map=Math.round((pp/3+dbp)*10)/10;
+  const adv=[];
+  // 脈壓差
+  let ppT,ppL;
+  if(pp>=thPP){ppT='≥'+thPP+':須注意(粗血管有動脈硬化傾向)';ppL=2;}
+  else if(pp>=40){ppT='正常範圍';ppL=0;}
+  else if(pp>=25){ppT='偏窄';ppL=1;}
+  else{ppT='明顯偏窄';ppL=2;}
+  // 平均動脈壓
+  let mapT,mapL;
+  if(map>=thMAP){mapT='≥'+thMAP+':須注意(細血管有動脈硬化傾向)';mapL=2;}
+  else if(map>=70){mapT='正常範圍';mapL=0;}
+  else if(map>=65){mapT='偏低邊緣';mapL=1;}
+  else{mapT='偏低(<65,器官灌流可能不足)';mapL=2;}
+  $('ppV').textContent=pp;$('ppT').textContent=ppT;$('ppT').className='tag '+cls(ppL);
+  $('mapV').textContent=map;$('mapT').textContent=mapT;$('mapT').className='tag '+cls(mapL);
+  // 血壓分級(參考 AHA/ACC 與台灣高血壓指引;家庭血壓 ≥135/85 即達高血壓診斷門檻)
+  let cat,cl;
+  if(sbp>=180||dbp>=120){cat='高血壓危象範圍';cl=2;}
+  else if(sbp>=140||dbp>=90){cat='高血壓第 2 期範圍';cl=2;}
+  else if(sbp>=130||dbp>=80){cat='高血壓第 1 期範圍';cl=1;}
+  else if(sbp>=120){cat='血壓偏高(高血壓前期)';cl=1;}
+  else if(sbp<90||dbp<60){cat='血壓偏低';cl=1;}
+  else{cat='血壓理想';cl=0;}
+  $('cat').innerHTML=`<span class="${cls(cl)}">${sbp}/${dbp} mmHg — ${cat}</span>`+(pul?`,脈搏 ${pul}`:'');
+  if(cl===2&&(sbp>=180||dbp>=120))adv.push('⚠️ 數值已達危象範圍:請靜坐 5 分鐘後複測;若仍如此,或伴隨胸痛、喘、劇烈頭痛、視力模糊、肢體無力,請立即就醫/撥打 119。');
+  else if(cl===2)adv.push('血壓偏高,建議連續 7 天、早晚各量 2 次(坐姿休息 5 分鐘後)記錄,攜帶紀錄與心臟內科或家醫科討論。');
+  else if(cl===1&&cat!=='血壓偏低')adv.push('已略高於理想值:減鹽(每日鈉 <2,000 mg)、規律有氧運動(每週 150 分鐘)、控制體重、少酒、睡眠充足,並持續追蹤。');
+  if(cat==='血壓偏低')adv.push('偏低若無頭暈、乏力、昏厥,多屬體質;若有症狀、或站起時頭暈(姿勢性低血壓),請補充水分、緩慢起身,並與醫師討論。');
+  // 指標綜合
+  if(ppL===2&&pp>=thPP){
+    adv.push(`脈壓差 ${pp} 偏大:常見於大動脈變硬、彈性下降(尤其年長者、收縮壓偏高者)。建議追蹤頸動脈超音波、脈波傳導速度(PWV/ABI)等檢查,並一併評估血脂、血糖。`);
+  }else if(ppL>=1){
+    adv.push(`脈壓差 ${pp} 偏窄:可能與心搏出量偏低、脫水、嚴重主動脈瓣狹窄或心衰竭有關;若伴隨疲倦、喘、頭暈,請就醫評估。`);
+  }
+  if(mapL===2&&map>=thMAP){
+    adv.push(`平均動脈壓 ${map} 偏高:代表末梢小血管阻力增加,與長期高舒張壓、小動脈硬化相關,對腎臟與腦部微血管負擔較大,建議檢查尿液蛋白/尿蛋白肌酸酐比與腎功能。`);
+  }else if(mapL===2){
+    adv.push(`平均動脈壓 ${map} 偏低:重要器官灌流可能不足,若有頭暈、意識不清、尿量減少須儘速就醫。`);
+  }
+  if(ppL===0&&mapL===0&&cl===0)adv.push('兩項動脈硬化指標皆在正常範圍,維持現有生活型態即可,每週量 2–3 次追蹤。');
+  // 脈搏
+  if(pul){
+    if(pul>100)adv.push(`脈搏 ${pul} 偏快:先排除剛運動、咖啡因、焦慮、發燒或脫水;靜息仍持續 >100 或心悸,請就醫做心電圖。`);
+    else if(pul<60)adv.push(`脈搏 ${pul} 偏慢:規律運動者可屬正常;若有頭暈、昏厥或乏力、或有用 β 阻斷劑等藥物,請與醫師確認。`);
+    else adv.push(`脈搏 ${pul} 在正常範圍(60–100)。若脈搏不規則(忽快忽慢),可能為心律不整,建議請醫師評估。`);
+  }
+  adv.push('提醒:單次測量變異大,脈壓差與平均動脈壓以多日平均判讀較準;測量前 30 分鐘避免咖啡、抽菸與運動,手臂與心臟同高。');
+  $('adv').innerHTML=adv.map(t=>`<li>${t}</li>`).join('');
+  $('res').hidden=false;
+  save({t:Date.now(),sbp,dbp,pul,pp,map});
+  $('res').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+/* ---------- 紀錄 ---------- */
+function load(){try{return JSON.parse(localStorage.getItem('bp_hist')||'[]')}catch(e){return[]}}
+function save(r){
+  const h=load();
+  const last=h[0];
+  if(last&&last.sbp===r.sbp&&last.dbp===r.dbp&&last.pul===r.pul&&r.t-last.t<60000)return render();
+  h.unshift(r);localStorage.setItem('bp_hist',JSON.stringify(h.slice(0,200)));render();
+}
+function render(){
+  const h=load();
+  $('hist').innerHTML=h.length?h.slice(0,30).map(r=>{
+    const d=new Date(r.t);
+    return `<div><span>${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}</span><span>${r.sbp}/${r.dbp} 脈${r.pul||'-'}</span><span>PP ${r.pp} · MAP ${r.map}</span></div>`;
+  }).join(''):'<div class="sub">尚無紀錄</div>';
+}
+$('bClr').onclick=()=>{if(confirm('確定清除所有紀錄?')){localStorage.removeItem('bp_hist');render();}};
+$('bCam').onclick=openCam;$('bShot').onclick=shot;$('bAna').onclick=analyze;$('bOcr2').onclick=ocr2;
+render();
+if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js'));
+</script>
+</body>
+</html>
